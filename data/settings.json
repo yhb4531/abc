@@ -1,0 +1,20 @@
+{
+    "system": {
+        "app_name": "MaplePro Macro",
+        "version": "1.0.0",
+        "debug_mode": true
+    },
+    "hardware": {
+        "com_port": "", 
+        "baud_rate": 115200
+    },
+    "capture": {
+        "window_name": "MapleStory",
+        "yolo_model_path": "models/minimap.pt",
+        "confidence_threshold": 0.6
+    },
+    "game_logic": {
+        "hp_threshold": 30,
+        "mp_threshold": 30
+    }
+}

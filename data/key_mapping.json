@@ -1,0 +1,10 @@
+{
+    "jump": "f",
+    "attack": "s",
+    "teleport": "d",
+    "rope": "c",
+    "interact": "y",
+    "install": "r",
+    "buff": "f1",
+    "pet_food": "3"
+}
