@@ -1,100 +1,128 @@
 import time
-from logic.utils import get_human_delay, get_jitter
+import math
+import core.config as config
 
 class RuneManager:
-    def __init__(self, vision, navigator, combat):
-        self.vision = vision
-        self.nav = navigator
-        self.combat = combat
+    def __init__(self):
+        self.active = False          # 룬 해결 모드 활성화 여부
+        self.step_phase = "SEARCH"   # 현재 단계 (SEARCH, MOVE, INTERACT, SOLVE)
+        self.rune_pos = None         # 룬 좌표
+        self.start_time = 0          # 타임아웃 계산용
+        self.cooldown = 0            # 룬 탐지 쿨타임
         
-        self.is_active = False
-        self.rune_pos = None      
-        self.move_start_time = 0
-        self.detection_cooldown = 0
-    
-    def try_activate(self):
-        if time.time() < self.detection_cooldown: return False
-        if self.is_active: return True
+        # 이동 설정 (Auto-Maple 스타일)
+        self.tolerance_x = 10        # X축 허용 오차
+        self.tolerance_y = 5         # Y축 허용 오차
 
-        detections = self.vision.detect_objects()
+    def check_and_activate(self):
+        """ 주기적으로 룬이 있는지 확인하고 상태를 활성화 """
+        if time.time() < self.cooldown: return False
+        if self.active: return True
+        if not config.vision: return False
+
+        detections = config.vision.detect_objects()
         for d in detections:
             if d['label'] == 'rune':
-                # y2(발바닥) 좌표 타겟
-                print(f"[Rune] 발견! 정밀 이동 시작 (x:{d['x']}, y_foot:{d['y2']})")
-                self.combat.release_attack()
-                self.nav.stop()
+                print(f"[Rune] 룬 발견! 좌표: ({d['x']}, {d['y']})")
                 
-                self.is_active = True
-                self.rune_pos = {'x': d['x'], 'y': d['y2']}
-                self.move_start_time = time.time()
+                # 상태 초기화
+                self.active = True
+                self.step_phase = "MOVE"
+                self.rune_pos = (d['x'], d['y2']) # y2: 발바닥 위치
+                self.start_time = time.time()
+                
+                # 하드웨어 초기화 (이동 중이던 키 떼기)
+                if config.hardware:
+                    config.hardware.release_all()
                 return True
         
-        self.detection_cooldown = time.time() + 0.5
+        # 못 찾았으면 1초 뒤 다시 탐색
+        self.cooldown = time.time() + 1.0
         return False
 
-    def step(self, player_pos):
-        if not self.is_active or not self.rune_pos:
-            self.is_active = False
-            return "FAILED"
+    def step(self):
+        """ 룬 해결 상태 머신 (매 프레임 호출) """
+        if not self.active: return
 
-        # 1. 룬 소멸 감지 (Stuck 방지)
-        detections = self.vision.detect_objects()
-        rune_exists = False
-        player_feet_y = player_pos[1] + 30 
-        
-        for d in detections:
-            if d['label'] == 'rune':
-                rune_exists = True
-                self.rune_pos['x'] = d['x']
-                self.rune_pos['y'] = d['y2']
-            elif d['label'] in ['char', 'player', 'me']:
-                player_feet_y = d['y2']
+        # 타임아웃 안전장치 (15초 넘으면 포기)
+        if time.time() - self.start_time > 15.0:
+            print("[Rune] 시간 초과로 중단")
+            self.finish("FAILED")
+            return
 
-        if not rune_exists:
-            if time.time() - self.move_start_time > 2.0:
-                print("[Rune] 룬 사라짐 -> 복귀")
-                self.is_active = False
-                return "FAILED"
+        # 플레이어 위치 확인
+        if not config.player_pos: return
+        px, py = config.player_pos
+        tx, ty = self.rune_pos
 
-        curr_x = player_pos[0]
-        curr_y = player_feet_y
-        target_x = self.rune_pos['x']
-        target_y = self.rune_pos['y']
-
-        # [핵심] 정밀 이동 로직 (X 5px, Y 3px)
-
-        # 1. X축 이동 (허용오차 5px)
-        # 5px보다 멀면 무조건 좌우 이동만 함
-        if abs(curr_x - target_x) > 5:
-            self.nav.move_horizontal(curr_x, target_x)
-            return "RUNNING"
-        
-        # 2. X축 완료 -> 멈추고 Y축 확인
-        else:
-            # 좌우 키 뗌 (X축 고정)
-            self.nav.hw.release('left')
-            self.nav.hw.release('right')
+        # === [Phase 1] 이동 (Move & Adjust) ===
+        if self.step_phase == "MOVE":
+            dx = tx - px
+            dy = ty - py
             
-            # Y축 확인 (허용오차 3px)
-            if abs(curr_y - target_y) <= 3:
-                # X도 5px 이내, Y도 3px 이내 -> 완벽 도착
-                self.nav.stop()
-                print("[Rune] 정밀 도착 완료! 대기")
-                self.is_active = False 
-                return "ARRIVED"
-            else:
-                # 높이가 안 맞음 -> 윗점프/로프 등 시도
-                self.nav.move_vertical(curr_y, target_y)
-                return "RUNNING"
+            # X축 이동
+            if abs(dx) > self.tolerance_x:
+                direction = "right" if dx > 0 else "left"
+                if config.hardware:
+                    config.hardware.hold(config.job_manager.get_key(direction))
+                return # 이동 중에는 대기
+            
+            # X축 도착 -> 키 떼기
+            if config.hardware:
+                config.hardware.release("left")
+                config.hardware.release("right")
 
-        # 타임아웃
-        if time.time() - self.move_start_time > 15.0:
-            self.nav.stop()
-            self.is_active = False
-            return "FAILED"
+            # Y축 이동 (높이 차이가 크면 점프/로프 시도)
+            if abs(dy) > self.tolerance_y:
+                # 룬이 위에 있으면 윗점프 시도 (간단 구현)
+                if dy < -50: # 룬이 훨씬 위에 있음
+                    print("[Rune] 윗점프 시도")
+                    if config.hardware:
+                        config.hardware.press(config.job_manager.get_key("up")) # 일단 윗키만
+                        time.sleep(0.1)
+                return 
 
-        return "RUNNING"
+            # 도착 완료
+            print("[Rune] 위치 도착. 상호작용 시도")
+            self.step_phase = "INTERACT"
 
-    def reset(self):
-        self.is_active = False
+        # === [Phase 2] 상호작용 (Interact) ===
+        elif self.step_phase == "INTERACT":
+            if config.hardware:
+                # 채집키(Interact) 입력
+                interact_key = config.job_manager.get_key("interact")
+                if interact_key:
+                    config.hardware.press(interact_key)
+                    time.sleep(0.5) # 룬 해제 모션 대기
+                else:
+                    print("[Rune] 상호작용(interact) 키 설정이 없습니다.")
+                    self.finish("FAILED")
+                    return
+            
+            self.step_phase = "SOLVE"
+            self.solve_start_time = time.time()
+
+        # === [Phase 3] 화살표 풀기 (Solve) ===
+        elif self.step_phase == "SOLVE":
+            # Auto-Maple은 여기서 스크린샷을 찍고 텐서플로우 모델로 화살표를 판독합니다.
+            # 현재는 모델 파일이 없으므로 구조만 잡아둡니다.
+            
+            # TODO: 추후 detection.py의 화살표 인식 모델 연결 필요
+            # arrows = config.vision.detect_arrows() 
+            # if arrows:
+            #     for arrow in arrows:
+            #         config.hardware.press(arrow)
+            #     self.finish("SUCCESS")
+            
+            print("[Rune] 화살표 입력 대기... (자동 입력 미구현)")
+            
+            # 임시: 3초 대기 후 성공 처리 (사람이 칠 시간 벌어주기)
+            if time.time() - self.solve_start_time > 3.0:
+                self.finish("SUCCESS")
+
+    def finish(self, status):
+        """ 종료 처리 """
+        print(f"[Rune] 룬 시퀀스 종료: {status}")
+        self.active = False
         self.rune_pos = None
+        self.cooldown = time.time() + 5.0 # 종료 후 5초간 쿨타임

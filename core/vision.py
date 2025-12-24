@@ -1,14 +1,21 @@
 import cv2
 import numpy as np
-import win32gui, win32ui, win32con
-from ctypes import windll
+import win32gui
+import mss
 from ultralytics import YOLO
 import time
 import threading
+import ctypes
+
+# 고해상도 모니터(DPI) 인식 설정
+try:
+    ctypes.windll.user32.SetProcessDPIAware()
+except:
+    pass
 
 class VisionSystem:
     def __init__(self, minimap_model_path):
-        print("[Vision] 시각 시스템 초기화...")
+        print("[Vision] 시각 시스템 초기화 (MSS 고속 캡처 모드)...")
         try:
             self.model_minimap = YOLO(minimap_model_path)
         except Exception as e:
@@ -23,16 +30,17 @@ class VisionSystem:
         self.pending_rect = None
         self.stability_count = 0
         
-        # [최적화] 캐싱
+        # 캐싱
         self.last_inference_time = 0
         self.cached_detections = []
         self.cache_duration = 0.05
 
-        # [추가] 미니맵 고정 스위치
+        # 미니맵 고정 스위치
         self.is_minimap_locked = False
-        self.lock = threading.RLock() # 2. RLock 생성 (중요!)
+        self.lock = threading.RLock()
+        
+        # [수정] __init__에서 self.sct를 생성하지 않습니다. (스레드 충돌 방지)
 
-    # ... (find_window, capture_screen 함수는 기존 유지) ...
     def find_window(self, window_name="MapleStory"):
         candidate_hwnds = []
         def callback(hwnd, _):
@@ -53,46 +61,49 @@ class VisionSystem:
     def capture_screen(self):
         if not self.hwnd:
             if not self.find_window(): return None
+        
         try:
-            left, top, right, bot = win32gui.GetWindowRect(self.hwnd)
-            w, h = right - left, bot - top
-            if w <= 100 or h <= 100: return None
+            # 1. 윈도우 클라이언트 영역 크기 계산
+            rect = win32gui.GetClientRect(self.hwnd)
+            if not rect: return None
+            
+            client_w = rect[2] - rect[0]
+            client_h = rect[3] - rect[1]
+            
+            if client_w <= 10 or client_h <= 10: return None
 
-            hwndDC = win32gui.GetWindowDC(self.hwnd)
-            mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
-            saveDC = mfcDC.CreateCompatibleDC()
-            saveBitMap = win32ui.CreateBitmap()
-            saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-            saveDC.SelectObject(saveBitMap)
+            # 2. 화면 좌표 변환
+            client_point = win32gui.ClientToScreen(self.hwnd, (0, 0))
+            client_x, client_y = client_point
 
-            result = windll.user32.PrintWindow(self.hwnd, saveDC.GetSafeHdc(), 2)
-            if result == 1:
-                bmpinfo = saveBitMap.GetInfo()
-                bmpstr = saveBitMap.GetBitmapBits(True)
-                img = np.frombuffer(bmpstr, dtype='uint8')
-                img.shape = (bmpinfo['bmHeight'], bmpinfo['bmWidth'], 4)
-                win32gui.DeleteObject(saveBitMap.GetHandle())
-                saveDC.DeleteDC()
-                mfcDC.DeleteDC()
-                win32gui.ReleaseDC(self.hwnd, hwndDC)
+            monitor = {
+                "top": client_y, 
+                "left": client_x, 
+                "width": client_w, 
+                "height": client_h
+            }
+            
+            # [수정] with 문을 사용하여 스레드 안전성 확보
+            with mss.mss() as sct:
+                sct_img = sct.grab(monitor)
+                img = np.array(sct_img)
+                # mss(BGRA) -> OpenCV(BGR)
                 return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            else:
-                win32gui.DeleteObject(saveBitMap.GetHandle())
-                saveDC.DeleteDC()
-                mfcDC.DeleteDC()
-                win32gui.ReleaseDC(self.hwnd, hwndDC)
-                return None
-        except: return None
 
-    # [수정] 락 걸려있으면 재탐색 안 함
+        except Exception as e:
+            # print(f"[Vision] 캡처 오류: {e}") 
+            return None
+
     def find_minimap_area(self):
         if self.is_minimap_locked and self.minimap_rect:
-            return True # 이미 잠겨있고 좌표도 있으면 패스
+            return True 
 
         full_img = self.capture_screen()
         if full_img is None: return False
         
-        roi = full_img[0:400, 0:500] 
+        roi_h, roi_w = min(400, full_img.shape[0]), min(500, full_img.shape[1])
+        roi = full_img[0:roi_h, 0:roi_w] 
+        
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         edges = cv2.Canny(blurred, 50, 150)
@@ -141,9 +152,8 @@ class VisionSystem:
         return False
 
     def get_cropped_minimap(self):
-        with self.lock: # 3. 락 걸기
+        with self.lock:
             current_time = time.time()
-                # [수정] 락 안 걸려있을 때만 주기적 재스캔
             if not self.is_minimap_locked:
                 if self.minimap_rect is None or (current_time - self.last_scan_time > self.scan_interval):
                     self.find_minimap_area()
@@ -154,9 +164,9 @@ class VisionSystem:
 
             x, y, w, h = self.minimap_rect
             if y+h > full_img.shape[0] or x+w > full_img.shape[1]: return None
+            
             return full_img[y:y+h, x:x+w]
 
-    # ... (detect_objects, get_player_position 등 기존 유지) ...
     def detect_objects(self):
         current_time = time.time()
         if current_time - self.last_inference_time < self.cache_duration:
@@ -193,4 +203,3 @@ class VisionSystem:
                 if label in ['char', 'player', 'character', 'me']:
                     return (d['x'], d['y'])
             return None
-        

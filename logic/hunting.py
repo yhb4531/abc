@@ -1,90 +1,120 @@
 import json
 import os
 import sys
-
-# 분리된 모듈 임포트
-from logic.stationary import StationaryHunting
-from logic.portal import PortalHunting
+import core.config as config
+from logic.machine import Machine
+from logic.rune import RuneManager
+# [중요] 스케줄러 임포트
+from logic.scheduler import RoutineScheduler
 
 class HuntingManager:
     def __init__(self, hardware, vision, navigator, job_manager):
-        # 각각의 파일에서 불러온 클래스 사용
-        self.stationary = StationaryHunting(hardware, vision, navigator, job_manager)
-        self.portal = PortalHunting(hardware, vision, navigator, job_manager)
-        self.current_logic = None
+        self.machine = Machine()
+        self.rune_manager = RuneManager()
+        self.scheduler = None # 스케줄러 인스턴스
+        
+        self.state = "IDLE"
+        self.is_running = False
+        self.is_paused = False
+        
+        # GUI 더미
+        self.cycle_start_time = 0
+        self.cycle_duration = 0
 
     def load_path(self, map_name):
-        # 1. 경로 설정
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         file_path = os.path.join(base_dir, "data", "maps.json")
-        
-        # 2. 파일 읽기
         try:
             with open(file_path, 'r', encoding='utf-8') as f: 
                 data = json.load(f)
         except Exception as e:
-            print(f"[Error] 파일 읽기 실패: {e}")
+            print(f"[Error] 맵 파일 로드 실패: {e}")
             return False
         
-        # 3. 데이터 파싱
-        points = data.get(map_name, {}).get("points", [])
-        if not points: 
-            print(f"[Error] '{map_name}' 맵 정보가 비어있습니다.")
-            return False
-
-        has_safe_spot = any(p['type'] == 'safe_spot' for p in points)
-        has_portal = any(p['type'] == 'portal' for p in points)
-
-        # 4. 로직 선택
-        if has_portal and len([p for p in points if p['type'] == 'portal']) >= 2:
-            self.current_logic = self.portal
-        elif has_safe_spot:
-            self.current_logic = self.stationary
+        map_data = data.get(map_name, {})
+        
+        # === [스케줄러 초기화] ===
+        if "points" in map_data:
+            points = map_data["points"]
+            settings = map_data.get("settings", {})
+            
+            # 스케줄러 생성 (쿨타임 관리 시작)
+            self.scheduler = RoutineScheduler(points, settings)
+            print(f"[System] 스케줄러 가동: {map_name}")
+            
+            # 첫 번째 루틴 생성 및 주입
+            first_routine = self.scheduler.get_next_routine()
+            self.machine.set_routine(first_routine)
+            self.machine.loop = False # [중요] 루프 끄기 (다 하면 스케줄러한테 다시 받아야 함)
+            
+        elif "routine" in map_data:
+            # 수동 루틴 모드 (Legacy)
+            self.scheduler = None
+            self.machine.set_routine(map_data["routine"])
+            self.machine.loop = True
         else:
-            self.current_logic = None
-            print("[Error] 적합한 사냥 로직을 찾을 수 없습니다.")
             return False
-        
-        # 5. 데이터 주입 및 결과 반환
-        print(f"[System] '{map_name}' 로드 중...")
-        result = self.current_logic.set_data(points)
-        print(f"[System] 로드 결과: {result}")
-        
-        # [핵심] 여기서 True가 리턴되어야 GUI가 성공으로 인식함
-        return result
+
+        return True
 
     def start(self):
-        if self.current_logic: self.current_logic.start()
+        self.is_running = True
+        self.is_paused = False
+        self.state = "HUNTING"
+        print("[Logic] 사냥 시작")
+
     def stop(self):
-        if self.current_logic: self.current_logic.stop()
+        self.is_running = False
+        self.state = "IDLE"
+        if config.hardware:
+            config.hardware.release_all()
+        print("[Logic] 사냥 중지")
+
     def pause(self):
-        if self.current_logic: self.current_logic.pause()
+        self.is_paused = True
+        self.state = "PAUSED"
+
     def resume(self):
-        if self.current_logic: self.current_logic.resume()
+        self.is_paused = False
+        self.state = "HUNTING"
+
     def step(self):
-        if self.current_logic: self.current_logic.step()
-    
-    # GUI 프로퍼티 연동
+        if not self.is_running or self.is_paused: return
+
+        # 1. 룬 체크
+        if self.rune_manager.check_and_activate():
+            self.state = "RUNE_SOLVING"
+            self.rune_manager.step()
+            return
+
+        # 2. 일반 사냥
+        self.state = "HUNTING"
+        self.machine.step()
+        
+        # 3. [신규] 루틴 리필 로직
+        # 현재 머신이 할 일을 다 끝냈는데(명령어 소진), 스케줄러가 있다면?
+        if self.scheduler and self.machine.current_idx >= len(self.machine.commands):
+            print("[Logic] 현재 사이클 종료. 다음 스케줄 생성 중...")
+            
+            # 다음 할 일 받아오기 (쿨타임 체크 -> 사냥 생성)
+            next_routine = self.scheduler.get_next_routine()
+            self.machine.set_routine(next_routine)
+            
+            # 머신 리셋 (다시 0번부터 실행)
+            self.machine.current_idx = 0
+
+    # GUI 호환성
     @property
-    def is_running(self): return self.current_logic.is_running if self.current_logic else False
+    def current_logic(self): return self
     @property
-    def is_paused(self): return self.current_logic.is_paused if self.current_logic else False
+    def summon_index(self): return 0
     @property
-    def state(self): return self.current_logic.state if self.current_logic else "IDLE"
-    
+    def summon_points(self): return []
     @property
-    def summon_index(self): return getattr(self.current_logic, 'summon_index', 0)
+    def current_portal_idx(self): return 0
     @property
-    def summon_points(self): return getattr(self.current_logic, 'summon_points', [])
-    @property
-    def current_portal_idx(self): return getattr(self.current_logic, 'current_portal_idx', 0)
-    @property
-    def portal_points(self): return getattr(self.current_logic, 'portal_points', [])
-    @property
-    def cycle_start_time(self): return getattr(self.current_logic, 'cycle_start_time', 0)
-    @property
-    def cycle_duration(self): return getattr(self.current_logic, 'cycle_duration', 60)
+    def portal_points(self): return []

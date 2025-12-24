@@ -2,12 +2,13 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QComboBox, QMessageBox, QGroupBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 import cv2
 import os
 import json
 import time
 import sys
+import core.config as config
 
 # ==========================================
 # 스레드 (로직 실행용)
@@ -109,7 +110,7 @@ class HomeTab(QWidget):
         self.btn_start = QPushButton("시작")
         self.btn_start.setFixedHeight(50)
         self.btn_start.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; font-size: 16px;")
-        self.btn_start.clicked.connect(self.start_hunting)
+        self.btn_start.clicked.connect(self.toggle_start)
         
         # [일시정지 버튼]
         self.btn_pause = QPushButton("일시정지")
@@ -245,3 +246,52 @@ class HomeTab(QWidget):
         self.btn_stop.setEnabled(False)
         self.btn_pause.setText("일시정지")
         self.lbl_detail.setText("중지됨")
+    
+    # 기존 함수들 아래에 추가하세요
+    @pyqtSlot()
+    def toggle_start(self):
+        import core.config as config
+
+        if not self.logic: return
+
+        # === [1] 봇이 켜져 있으면 -> 끄기 ===
+        if config.enabled:
+            if self.hunting_thread:
+                self.hunting_thread.stop()
+                self.hunting_thread = None
+            if self.logic:
+                self.logic.stop()
+            
+            config.enabled = False
+            
+            self.btn_start.setText("시작")
+            self.btn_start.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; font-size: 16px;")
+            self.btn_pause.setEnabled(False)
+            self.lbl_detail.setText("중지됨")
+        
+        # === [2] 봇이 꺼져 있으면 -> 켜기 ===
+        else:
+            # 1. 콤보박스에서 맵 이름 가져오기
+            map_name = self.combo_maps.currentText()
+            if not map_name:
+                QMessageBox.warning(self, "오류", "선택된 맵이 없습니다.")
+                return
+            
+            # 2. [핵심] 로직에 맵 데이터 로드하기 (이게 빠져서 오류가 났던 것)
+            if not self.logic.load_path(map_name):
+                QMessageBox.critical(self, "오류", f"'{map_name}' 경로 로드 실패")
+                return
+            
+            # 3. 로직 시작
+            self.logic.start()
+            config.enabled = True
+            
+            # 4. 스레드 시작
+            self.hunting_thread = HuntingThread(self.logic)
+            self.hunting_thread.status_update.connect(self.update_status_label)
+            self.hunting_thread.start()
+            
+            self.btn_start.setText("정지")
+            self.btn_start.setStyleSheet("background-color: #F44336; color: white; font-weight: bold; font-size: 16px;")
+            self.btn_pause.setEnabled(True)
+            self.lbl_detail.setText("가동 중...")

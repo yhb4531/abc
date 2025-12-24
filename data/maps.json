@@ -1,98 +1,11 @@
 {
-    "mech": {
-        "points": [
-            {
-                "x": 143,
-                "y": 59,
-                "type": "summon"
-            },
-            {
-                "x": 114,
-                "y": 59,
-                "type": "summon"
-            },
-            {
-                "x": 54,
-                "y": 58,
-                "type": "summon"
-            },
-            {
-                "x": 25,
-                "y": 72,
-                "type": "safe_spot",
-                "direction": "right"
-            }
-        ],
-        "created_at": "2025-12-03 22:35:06"
-    },
-    "tests": {
-        "points": [
-            {
-                "x": 135,
-                "y": 38,
-                "type": "portal"
-            },
-            {
-                "x": 92,
-                "y": 37,
-                "type": "portal"
-            },
-            {
-                "x": 58,
-                "y": 39,
-                "type": "portal"
-            }
-        ],
-        "created_at": "2025-12-04 21:00:35"
-    },
-    "alley1": {
-        "points": [
-            {
-                "x": 35,
-                "y": 38,
-                "type": "portal"
-            },
-            {
-                "x": 83,
-                "y": 38,
-                "type": "portal"
-            },
-            {
-                "x": 83,
-                "y": 37,
-                "type": "summon"
-            },
-            {
-                "x": 132,
-                "y": 38,
-                "type": "portal"
-            }
-        ],
-        "created_at": "2025-12-09 18:49:03"
-    },
-    "alley1test": {
-        "points": [
-            {
-                "x": 36,
-                "y": 38,
-                "type": "portal"
-            },
-            {
-                "x": 84,
-                "y": 38,
-                "type": "portal"
-            },
-            {
-                "x": 83,
-                "y": 38,
-                "type": "summon"
-            },
-            {
-                "x": 123,
-                "y": 38,
-                "type": "portal"
-            }
-        ],
-        "created_at": "2025-12-09 18:28:01"
+    "TestMap": {
+        "routine": [
+            { "type": "wait", "args": { "duration": 1.0 } },
+            { "type": "key", "args": { "key_name": "attack", "duration": 0.5 } },
+            { "type": "wait", "args": { "duration": 0.5 } },
+            { "type": "key", "args": { "key_name": "jump" } },
+            { "type": "key", "args": { "key_name": "attack" } }
+        ]
     }
 }
