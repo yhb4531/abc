@@ -1,51 +1,16 @@
 {
-    "active_job": "메카닉",
-    "jobs": {
-        "메카닉": {
-            "keys": {
-                "jump": "f",
-                "teleport": "",
-                "attack": "s",
-                "interact": "y",
-                "rope": "alt",
-                "pet_food": "3"
-            },
-            "aux_skill": {
-                "key": "space",
-                "mode": "sync"
-            },
-            "movement": {
-                "type": "flash_jump",
-                "up_jump_method": "command"
-            },
-            "skills": {
-                "summons": [
-                    "4",
-                    "4",
-                    "e"
-                ],
-                "portal": "r"
-            }
-        },
-        "일리움": {
-            "keys": {
-                "jump": "f",
-                "teleport": "d",
-                "attack": "s",
-                "interact": "y",
-                "rope": "alt"
-            },
-            "movement": {
-                "type": "teleport",
-                "up_jump_method": "command"
-            },
-            "skills": {
-                "summons": [
-                    "t"
-                ],
-                "portal": "r"
-            },
-            "aux_skill": {}
+    "mech": {
+        "move_mode": "flash_jump",
+        "keys": {
+            "attack": "s",
+            "sub_attack": "space",
+            "jump": "f",
+            "rope": "alt",
+            "interact": "y",
+            "left": "left",
+            "right": "right",
+            "up": "up",
+            "down": "down"
         }
     }
 }

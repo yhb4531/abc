@@ -1,11 +1,37 @@
 {
-    "TestMap": {
-        "routine": [
-            { "type": "wait", "args": { "duration": 1.0 } },
-            { "type": "key", "args": { "key_name": "attack", "duration": 0.5 } },
-            { "type": "wait", "args": { "duration": 0.5 } },
-            { "type": "key", "args": { "key_name": "jump" } },
-            { "type": "key", "args": { "key_name": "attack" } }
-        ]
+    "test": {
+        "points": [
+            {
+                "x": 141,
+                "y": 56,
+                "type": "summon",
+                "key": "w",
+                "cooldown": 60
+            },
+            {
+                "x": 56,
+                "y": 56,
+                "type": "summon",
+                "key": "w",
+                "cooldown": 60
+            },
+            {
+                "x": 27,
+                "y": 57,
+                "type": "summon",
+                "key": "e",
+                "cooldown": 60
+            },
+            {
+                "x": 45,
+                "y": 71,
+                "type": "safe_spot",
+                "key": "e",
+                "cooldown": 60
+            }
+        ],
+        "settings": {
+            "hunting_type": "stationary"
+        }
     }
 }
